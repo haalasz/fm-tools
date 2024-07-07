@@ -33,7 +33,6 @@ left_column = sg.Column(left_layout, scrollable=True, vertical_scroll_only=True,
 right_layout = [
     [sg.Button("Import", size=(15, 2), font=("Arial", 12))],
     [sg.Button("Calculate Selected", size=(15, 2), font=("Arial", 12))],
-    [sg.Button("Calculate All", size=(15, 2), font=("Arial", 12))],
     [sg.Button("Save", size=(15, 2), font=("Arial", 12))],
     [sg.Combo(['-ALL-'], default_value='-ALL-', size=(18, 1), key='division_dropdown', readonly=True, enable_events=True)]
 ]
@@ -46,208 +45,70 @@ layout = [
 # Create the window
 window = sg.Window("FM Role Score Calculator", layout)
 
+# Helper function to transform values
+def transform_value(column, value):
+    if column not in ["Inf", "Rec", "Name", "Nat", "Club", "Division", "Position", "Preferred Foot", "Height", "Weight"]:
+        return int(value.split('-')[0].strip() or 1) if isinstance(value, str) and '-' in value else int(float(value)) if pd.notna(value) and value != '-' else 1
+    elif column in ["Age", "Height", "Weight"]:
+        return int(value.split()[0]) if isinstance(value, str) else int(float(value)) if pd.notna(value) else value
+    return value
+
+# Helper function to import HTML table
 def import_html_table():
     file_path = sg.popup_get_file('Choose an HTML file', file_types=(("HTML Files", "*.html"),))
     if file_path:
-        tables = pd.read_html(file_path, encoding='utf-8')
-        if tables:
-            df = tables[0]
-
-            # Remove rows where the "Name" column is NaN
-            df = df.dropna(subset=["Name"])
-            
-            # Function to clean and transform the data
-            def transform_value(column, value):
-                if column not in ["Inf", "Rec", "Name", "Nat", "Club", "Division", "Position", "Preferred Foot", "Height", "Weight"]:
-                    if pd.isna(value) or value == '-':
-                        return 1
-                    if isinstance(value, str) and '-' in value:
-                        parts = value.split('-')
-                        return int(parts[0].strip() or 1)
-                    try:
-                        return int(float(value))
-                    except ValueError:
-                        return value  # Return the original value if conversion fails
-                elif column == "Age":
-                    try:
-                        return int(float(value))
-                    except ValueError:
-                        return value  # Return the original value if conversion fails
-                elif column == "Height":
-                    # Remove " cm" from the height values
-                    return int(value.split(' ')[0]) if isinstance(value, str) else value
-                elif column == "Weight":
-                    # Remove " kg" from the weight values
-                    return int(value.split(' ')[0]) if isinstance(value, str) else value
-                return value
-
-            # Apply the transformation to each element in the DataFrame
+        try:
+            df = pd.read_html(file_path, encoding='utf-8')[0].dropna(subset=["Name"])
             df = df.apply(lambda x: x.map(lambda v: transform_value(x.name, v)))
-
-            # Extract unique divisions and update the dropdown menu
             unique_divisions = sorted(df['Division'].dropna().unique().tolist())
             window['division_dropdown'].update(values=['-ALL-'] + unique_divisions, value='-ALL-')
-
             sg.popup('Table Imported and Transformed')
             return df
-        else:
-            sg.popup('No tables found in the HTML file.')
-            return None
+        except Exception as e:
+            sg.popup_error(f"Error importing table: {e}")
+    return None
 
-def calculate_best_players(df, selected_roles, selected_division):
-    eligible_positions_goalkeeper = ["GK"]
-    eligible_positions_defender = ["D (C)", "D (LC)", "D (RC)", "D (RLC)", "D (L)", "D (R)", "D (RL)", "WB (RL)", "WB (L)", "WB (R)" , "DM"]
-    eligible_positions_fullbacks = ["D (LC)", "D (RC)", "D (RLC)", "D (L)", "D (R)", "D (RL)", "WB (RL)", "WB (L)", "WB (R)", "M (L)", "M (R)", "M (RL)"]
-    eligible_positions_midfielders = ["DM", "M (C)", "AM (C)"]
-
-    best_players = {}
-
+# Helper function to calculate scores
+def calculate_scores(df, selected_roles, selected_division, roles_data):
+    scores_dict = {}
     for category, roles_info in roles_data.items():
         for role_info in roles_info:
-            role = role_info['role']
             role_abbr = role_info['role_abbr']
             if role_abbr in selected_roles:
-                scores = []
                 total_multiplier = sum(role_info[attr] for attr in role_info if attr not in ['role', 'role_abbr'])
-
-                for _, player in df.iterrows():
-                    if selected_division == '-ALL-' or player['Division'] == selected_division:
-                        if any(pos in player['Position'] for pos in eligible_positions_goalkeeper) and role_abbr.startswith(("gkd", "skd", "sks", "ska")):
-                            total_score = sum(player[attr] * role_info[attr] for attr in role_info if attr not in ['role', 'role_abbr'])
-                            normalized_score = total_score / total_multiplier
-                            scores.append((player['Name'], player['Age'], player['Position'], player['Club'], player['Division'], player['Height'], player['Weight'], player['Preferred Foot'], normalized_score))
-                        elif any(pos in player['Position'] for pos in eligible_positions_defender) and role_abbr.startswith(("bpdd", "bpds", "bpdc", "cdd", "cds", "cdc", "wcbd", "wcbs", "wcba", "ls", "ld", "ncbd", "ncbs", "ncbc")):
-                            total_score = sum(player[attr] * role_info[attr] for attr in role_info if attr not in ['role', 'role_abbr'])
-                            normalized_score = total_score / total_multiplier
-                            scores.append((player['Name'], player['Age'], player['Position'], player['Club'], player['Division'], player['Height'], player['Weight'], player['Preferred Foot'], normalized_score))
-                        elif any(pos in player['Position'] for pos in eligible_positions_fullbacks) and role_abbr.startswith(("fbd", "fbs", "fba", "fbau", "nfbd", "wbd", "wbs", "wba", "wbau", "cwbs", "cwba", "iwbd", "iwbs", "iwba", "iwbau", "ifbd")):
-                            total_score = sum(player[attr] * role_info[attr] for attr in role_info if attr not in ['role', 'role_abbr'])
-                            normalized_score = total_score / total_multiplier
-                            scores.append((player['Name'], player['Age'], player['Position'], player['Club'], player['Division'], player['Height'], player['Weight'], player['Preferred Foot'], normalized_score))
-                        elif any(pos in player['Position'] for pos in eligible_positions_midfielders) and role_abbr.startswith(("dmd", "dms", "bwmd", "bwms", "hbd", "ad", "dlpd", "dlps", "svs", "sva", "rps", "rs", "cmd", "cms", "cma", "cmau", "cs", "bbms", "ms", "ma", "aps", "apa", "ams", "ama", "ssa", "ta", "es")):
-                            total_score = sum(player[attr] * role_info[attr] for attr in role_info if attr not in ['role', 'role_abbr'])
-                            normalized_score = total_score / total_multiplier
-                            scores.append((player['Name'], player['Age'], player['Position'], player['Club'], player['Division'], player['Height'], player['Weight'], player['Preferred Foot'], normalized_score))
-
-                # Sort players by normalized score
+                scores = [
+                    (
+                        player['Name'], player['Age'], player['Position'], player['Club'], player['Division'],
+                        player['Height'], player['Weight'], player['Preferred Foot'],
+                        sum(player[attr] * role_info[attr] for attr in role_info if attr not in ['role', 'role_abbr']) / total_multiplier
+                    )
+                    for _, player in df.iterrows() if selected_division == '-ALL-' or player['Division'] == selected_division
+                ]
                 sorted_scores = sorted(scores, key=lambda x: x[8], reverse=True)
-
                 if sorted_scores:
                     top_score = sorted_scores[0][8]
-                    
-                    top_10_players = []
-                    for player in sorted_scores[:10]:
-                        score_diff = ((top_score - player[8]) / top_score) * 100 if top_score != 0 else 0
-                        top_10_players.append(player + (score_diff,))
+                    scores_dict[role_info['role']] = [(player + (100 * ((top_score - player[8]) / top_score) if top_score else 0,)) for player in sorted_scores[:10]]
+    return scores_dict
 
-                    best_players[role] = top_10_players
+# Helper function to save scores
+def save_scores(df, roles_data, selected_roles, selected_division):
+    scores = calculate_scores(df, selected_roles, selected_division, roles_data)
+    for role, players in scores.items():
+        file_name = f"{role.lower()}_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}.csv"
+        pd.DataFrame(players, columns=["Name", "Age", "Position", "Club", "Division", "Height", "Weight", "Preferred Foot", "Score", "Diff to 1st (%)"]).to_csv(file_name, index=False)
+        sg.popup(f"Saved {role} scores to {file_name}")
 
-    return best_players
+# Helper function to display scores
+def display_scores(scores):
+    display_text = "\n".join(
+        f"{role}:\n{'Name':<25} {'Age':<5} {'Position':<10} {'Club':<25} {'Division':<15} {'Height':<7} {'Weight':<7} {'Preferred Foot':<15} {'Score':<5} {'Diff to 1st (%)':<5}\n"
+        + "-" * 140 + "\n" + "\n".join(
+            f"{player[0]:<25} {player[1]:<5} {player[2]:<10} {player[3]:<25} {player[4]:<15} {player[5]:<7} {player[6]:<7} {player[7]:<15} {player[8]:.2f} {player[9]:.2f}"
+            for player in players) + "\n"
+        for role, players in scores.items())
+    sg.popup_scrolled("Top 10 Players for Each Role", display_text, size=(100, 30))
 
-def calculate_all_roles_for_players(df, selected_division):
-    eligible_positions_goalkeeper = ["GK"]
-    eligible_positions_defender = ["D (C)", "D (LC)", "D (RC)", "D (RLC)", "D (L)", "D (R)", "D (RL)", "WB (RL)", "WB (L)", "WB (R)" , "DM"]
-    eligible_positions_fullbacks = ["D (LC)", "D (RC)", "D (RLC)", "D (L)", "D (R)", "D (RL)", "WB (RL)", "WB (L)", "WB (R)", "M (L)", "M (R)", "M (RL)"]
-    eligible_positions_midfielders = ["DM", "M (C)", "AM (C)"]
-    all_players_scores = []
-
-    for _, player in df.iterrows():
-        if selected_division == '-ALL-' or player['Division'] == selected_division:
-            player_scores = [player['Name'], player['Age'], player['Position'], player['Club'], player['Division'], player['Height'], player['Weight'], player['Preferred Foot']]
-            
-            for category, roles_info in roles_data.items():
-                for role_info in roles_info:
-                    role_abbr = role_info['role_abbr']
-                    total_multiplier = sum(role_info[attr] for attr in role_info if attr not in ['role', 'role_abbr'])
-
-                    if any(pos in player['Position'] for pos in eligible_positions_goalkeeper) and role_abbr.startswith(("gkd", "skd", "sks", "ska")):
-                        total_score = sum(player[attr] * role_info[attr] for attr in role_info if attr not in ['role', 'role_abbr'])
-                        normalized_score = total_score / total_multiplier
-                        player_scores.append(normalized_score)
-                    elif any(pos in player['Position'] for pos in eligible_positions_defender) and role_abbr.startswith(("bpdd", "bpds", "bpdc", "cdd", "cds", "cdc", "wcbd", "wcbs", "wcba", "ls", "ld", "ncbd", "ncbs", "ncbc")):
-                        total_score = sum(player[attr] * role_info[attr] for attr in role_info if attr not in ['role', 'role_abbr'])
-                        normalized_score = total_score / total_multiplier
-                        player_scores.append(normalized_score)
-                    elif any(pos in player['Position'] for pos in eligible_positions_fullbacks) and role_abbr.startswith(("fbd", "fbs", "fba", "fbau", "nfbd", "wbd", "wbs", "wba", "wbau", "cwbs", "cwba", "iwbd", "iwbs", "iwba", "iwbau", "ifbd")):
-                        total_score = sum(player[attr] * role_info[attr] for attr in role_info if attr not in ['role', 'role_abbr'])
-                        normalized_score = total_score / total_multiplier
-                        player_scores.append(normalized_score)
-                    elif any(pos in player['Position'] for pos in eligible_positions_midfielders) and role_abbr.startswith(("dmd", "dms", "bwmd", "bwms", "hbd", "ad", "dlpd", "dlps", "svs", "sva", "rps", "rs", "cmd", "cms", "cma", "cmau", "cs", "bbms", "ms", "ma", "aps", "apa", "ams", "ama", "ssa", "ta", "es")):
-                        total_score = sum(player[attr] * role_info[attr] for attr in role_info if attr not in ['role', 'role_abbr'])
-                        normalized_score = total_score / total_multiplier
-                        player_scores.append(normalized_score)
-                    else:
-                        player_scores.append(None)  # Append None if not applicable
-
-            all_players_scores.append(player_scores)
-
-    return all_players_scores
-
-def save_all_players_scores_to_csv(df, roles_info, selected_roles, selected_division):
-    for role_info in roles_info:
-        role_abbr = role_info['role_abbr']
-        if role_abbr in selected_roles:  # Check if the checkbox is ticked
-            scores = []
-            total_multiplier = sum(role_info[attr] for attr in role_info if attr not in ['role', 'role_abbr'])
-            if total_multiplier == 0:
-                sg.popup_error(f"Error: Total multiplier for role '{role_info['role']}' is zero. Skipping saving scores for this role.")
-                continue
-            
-            eligible_positions_goalkeeper = ["GK"]
-            eligible_positions_defender = ["D (C)", "D (LC)", "D (RC)", "D (RLC)", "D (L)", "D (R)", "D (RL)", "WB (RL)", "WB (L)", "WB (R)", "DM"]
-            eligible_positions_fullbacks = ["D (LC)", "D (RC)", "D (RLC)", "D (L)", "D (R)", "D (RL)", "WB (RL)", "WB (L)", "WB (R)", "M (L)", "M (R)", "M (RL)"]
-            eligible_positions_midfielders = ["DM", "M (C)", "AM (C)"]
-
-            for _, player in df.iterrows():
-                if selected_division == '-ALL-' or player['Division'] == selected_division:
-                    if any(pos in player['Position'] for pos in eligible_positions_goalkeeper) and role_abbr.startswith(("gkd", "skd", "sks", "ska")):
-                        total_score = sum(player[attr] * role_info[attr] for attr in role_info if attr not in ['role', 'role_abbr'])
-                        normalized_score = total_score / total_multiplier
-                        scores.append((player['Name'], player['Age'], player['Position'], player['Club'], player['Division'], player['Height'], player['Weight'], player['Preferred Foot'], normalized_score))
-                    elif any(pos in player['Position'] for pos in eligible_positions_defender) and role_abbr.startswith(("bpdd", "bpds", "bpdc", "cdd", "cds", "cdc", "wcbd", "wcbs", "wcba", "ls", "ld", "ncbd", "ncbs", "ncbc")):
-                        total_score = sum(player[attr] * role_info[attr] for attr in role_info if attr not in ['role', 'role_abbr'])
-                        normalized_score = total_score / total_multiplier
-                        scores.append((player['Name'], player['Age'], player['Position'], player['Club'], player['Division'], player['Height'], player['Weight'], player['Preferred Foot'], normalized_score))
-                    elif any(pos in player['Position'] for pos in eligible_positions_fullbacks) and role_abbr.startswith(("fbd", "fbs", "fba", "fbau", "nfbd", "wbd", "wbs", "wba", "wbau", "cwbs", "cwba", "iwbd", "iwbs", "iwba", "iwbau", "ifbd")):
-                        total_score = sum(player[attr] * role_info[attr] for attr in role_info if attr not in ['role', 'role_abbr'])
-                        normalized_score = total_score / total_multiplier
-                        scores.append((player['Name'], player['Age'], player['Position'], player['Club'], player['Division'], player['Height'], player['Weight'], player['Preferred Foot'], normalized_score))
-                    elif any(pos in player['Position'] for pos in eligible_positions_midfielders) and role_abbr.startswith(("dmd", "dms", "bwmd", "bwms", "hbd", "ad", "dlpd", "dlps", "svs", "sva", "rps", "rs", "cmd", "cms", "cma", "cmau", "cs", "bbms", "ms", "ma", "aps", "apa", "ams", "ama", "ssa", "ta", "es")):
-                        total_score = sum(player[attr] * role_info[attr] for attr in role_info if attr not in ['role', 'role_abbr'])
-                        normalized_score = total_score / total_multiplier
-                        scores.append((player['Name'], player['Age'], player['Position'], player['Club'], player['Division'], player['Height'], player['Weight'], player['Preferred Foot'], normalized_score))
-
-            # Sort scores by normalized score (index 8) in descending order
-            scores_sorted = sorted(scores, key=lambda x: x[8], reverse=True)
-
-            # Generate timestamp for filename
-            timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-            file_name = f"{role_abbr.lower()}_{timestamp}.csv"
-
-            # Save to CSV
-            with open(file_name, 'w', newline='', encoding='utf-8') as f:
-                f.write("Name,Age,Position,Club,Division,Height,Weight,Preferred Foot,Score,Diff to 1st (%)\n")
-                top_score = scores_sorted[0][8] if scores_sorted else 0
-                for player in scores_sorted:
-                    score_diff = ((top_score - player[8]) / top_score) * 100 if top_score != 0 else 0
-                    f.write(f"{player[0]},{player[1]},{player[2]},{player[3]},{player[4]},{player[5]},{player[6]},{player[7]},{player[8]:.2f},{score_diff:.2f}\n")  # Format player[8] and score_diff as float with 2 decimal places
-            sg.popup(f"Saved {role_info['role']} scores to {file_name}")
-
-def save_all_roles_to_csv(df, all_players_scores, roles_data):
-    header = ["Name", "Age", "Position", "Club", "Division", "Height", "Weight", "Preferred Foot"]
-    for category, roles_info in roles_data.items():
-        for role_info in roles_info:
-            header.append(role_info['role_abbr'])
-    df_all_players = pd.DataFrame(all_players_scores, columns=header)
-
-    timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-    file_name = f"all_roles_scores_{timestamp}.csv"
-    df_all_players.to_csv(file_name, index=False)
-    sg.popup(f"Saved all players' scores for all roles to {file_name}")
-
-# Event loop
 df = None
-best_players = None
 while True:
     event, values = window.read()
     if event == sg.WINDOW_CLOSED:
@@ -258,25 +119,12 @@ while True:
         if df is not None:
             selected_roles = [role for role, selected in values.items() if selected]
             selected_division = values['division_dropdown']
-            best_players = calculate_best_players(df, selected_roles, selected_division)
-            display_text = ""
-            for role, players in best_players.items():
-                display_text += f"{role}:\n"
-                display_text += f"{'Name':<25} {'Age':<5} {'Position':<10} {'Club':<25} {'Division':<15} {'Height':<7} {'Weight':<7} {'Preferred Foot':<15} {'Score':<5} {'Diff to 1st (%)':<5}\n"
-                display_text += "-" * 140 + "\n"  # Adjusted width to accommodate Position and Diff
-                for player in players:
-                    display_text += f"{player[0]:<25} {player[1]:<5} {player[2]:<10} {player[3]:<25} {player[4]:<15} {player[5]:<7} {player[6]:<7} {player[7]:<15} {player[8]:.2f} {player[9]:.2f}\n"
-                display_text += "\n"
-            sg.popup_scrolled("Top 10 Players for Each Role", display_text, size=(100, 30))
-    elif event == "Calculate All":
-        if df is not None:
-            selected_division = values['division_dropdown']
-            all_players_scores = calculate_all_roles_for_players(df, selected_division)
-            save_all_roles_to_csv(df, all_players_scores, roles_data)
+            scores = calculate_scores(df, selected_roles, selected_division, roles_data)
+            display_scores(scores)
     elif event == "Save":
         if df is not None:
-            save_all_players_scores_to_csv(df, [role_info for roles_info in roles_data.values() for role_info in roles_info], 
-                                           [role_abbr for role_abbr, selected in values.items() if selected], 
-                                           values['division_dropdown'])
+            selected_roles = [role for role, selected in values.items() if selected]
+            selected_division = values['division_dropdown']
+            save_scores(df, roles_data, selected_roles, selected_division)
 
 window.close()
