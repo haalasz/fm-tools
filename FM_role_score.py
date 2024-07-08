@@ -7,7 +7,7 @@ sg.theme('DarkAmber')
 
 # Load roles from the JSON file
 try:
-    with open('player_roles.json', 'r') as file:
+    with open('alternative_player_roles.json', 'r') as file:
         roles_data = json.load(file)
 except FileNotFoundError:
     sg.popup_error("Error: The file 'player_roles.json' was not found.")
